@@ -2,6 +2,8 @@
 
 跨平台桌面端 3D Tiles 倾斜摄影与三维地质模型编辑器，基于 **Qt 6 (Quick / QML) + Rust + WebGPU (`wgpu`)** 深度混合架构。
 
+> 📖 **详细使用手册与平台实操指南**：完整包含 Windows、macOS 编译运行、三维漫游手势、TRS 空间编辑与排障，详见 **[用户实操手册 (docs/USER_MANUAL.md)](docs/USER_MANUAL.md)**。
+
 ![3D Tiles Editor Preview](docs/screenshots/editor_verified_screen.png)
 
 ---
