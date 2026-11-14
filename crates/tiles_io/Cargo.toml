@@ -1,0 +1,13 @@
+[package]
+name = "tiles_io"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+crossbeam-channel = { workspace = true }
+glam = { workspace = true }
+log = { workspace = true }
+serde_json = { workspace = true }
+tiles_core = { path = "../tiles_core" }
+tokio = { workspace = true }

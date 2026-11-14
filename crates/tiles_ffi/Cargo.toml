@@ -1,0 +1,18 @@
+[package]
+name = "tiles_ffi"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+crossbeam-channel = { workspace = true }
+glam = { workspace = true }
+log = { workspace = true }
+raw-window-handle = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tiles_app = { path = "../tiles_app" }
+tiles_core = { path = "../tiles_core" }
+tiles_render = { path = "../tiles_render" }

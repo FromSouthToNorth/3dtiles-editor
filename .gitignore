@@ -1,0 +1,34 @@
+# Cargo build outputs
+target/
+**/*.rs.bk
+*.pdb
+
+# CMake build outputs
+build/
+bin/
+lib/
+CMakeUserPresets.json
+
+# Qt & C++ artifacts
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+.qmake.stash
+
+# IDE / Editor configuration
+.vscode/
+.idea/
+*.user
+*.user.*
+*.swp
+*.swo
+*~
+
+# Temporary files & logs
+*.log
+*.tmp

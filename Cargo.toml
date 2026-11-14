@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/tiles_core",
+    "crates/tiles_io",
+    "crates/tiles_render",
+    "crates/tiles_app",
+    "crates/tiles_ffi",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["3dtiles-editor contributors"]
+
+[workspace.dependencies]
+anyhow = "1.0"
+bytemuck = { version = "1.19", features = ["derive"] }
+crossbeam-channel = "0.5"
+glam = { version = "0.29", features = ["bytemuck"] }
+gltf = "1.4"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+log = "0.4"
+pollster = "0.4"
+raw-window-handle = "0.6"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tokio = { version = "1.41", features = ["rt-multi-thread", "fs", "sync", "macros"] }
+wgpu = "23.0"
