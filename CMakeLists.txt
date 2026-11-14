@@ -30,10 +30,13 @@ qt_add_executable(3dtiles-editor
     qt_ui/include/TileTreeModel.hpp
 )
 
+set_source_files_properties(qt_ui/qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+
 qt_add_qml_module(3dtiles-editor
     URI EditorUI
     VERSION 1.0
     QML_FILES
+        qt_ui/qml/Theme.qml
         qt_ui/qml/Main.qml
         qt_ui/qml/SceneTreePanel.qml
         qt_ui/qml/InspectorPanel.qml

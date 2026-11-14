@@ -5,8 +5,23 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
+#include <QFile>
+#include <QTextStream>
+#include <iostream>
+
+static void customLogHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg) {
+    static QFile logFile(QStringLiteral("E:/bw/CESIUM/3dtiles-editor/qml_debug.log"));
+    if (!logFile.isOpen()) {
+        logFile.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
+    }
+    QTextStream out(&logFile);
+    out << msg << "\n";
+    out.flush();
+    std::cerr << msg.toStdString() << std::endl;
+}
 
 int main(int argc, char* argv[]) {
+    qInstallMessageHandler(customLogHandler);
 #if defined(Q_OS_LINUX)
     // MVP 阶段在 Wayland 会话下默认回退 XWayland，保证原生子 QWindow 句柄可用
     if (qEnvironmentVariableIsSet("WAYLAND_DISPLAY") && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {

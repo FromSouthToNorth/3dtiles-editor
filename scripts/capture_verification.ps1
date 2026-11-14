@@ -83,8 +83,8 @@ Write-Host "Compositing child viewport at ($relX, $relY), size: $cw x $chH on pa
 
 $gParent.DrawImage($childBmp, $relX, $relY, $cw, $chH)
 
-# Save the final verified full editor screenshot
-$outFile = "E:\bw\CESIUM\3dtiles-editor\editor_verified_screen.png"
+	# Save the final verified full editor screenshot
+	$outFile = "E:\bw\CESIUM\3dtiles-editor\docs\screenshots\editor_verified_screen.png"
 $parentBmp.Save($outFile, [System.Drawing.Imaging.ImageFormat]::Png)
 
 $childBmp.Dispose()
