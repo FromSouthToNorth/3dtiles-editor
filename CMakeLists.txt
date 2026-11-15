@@ -76,3 +76,15 @@ if(WIN32)
         WIN32_EXECUTABLE TRUE
     )
 endif()
+
+if(APPLE)
+    target_link_libraries(tiles_ffi INTERFACE
+        "-framework Metal"
+        "-framework QuartzCore"
+        "-framework IOSurface"
+        "-framework CoreGraphics"
+        "-framework CoreFoundation"
+        "-framework CoreServices"
+        "-framework IOKit"
+    )
+endif()

@@ -1,6 +1,7 @@
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use std::ffi::{c_void, CStr, CString};
 use std::num::NonZeroIsize;
+use std::ptr::NonNull;
 use std::os::raw::c_char;
 use std::path::PathBuf;
 use tiles_app::{AppCommand, EngineSession};
