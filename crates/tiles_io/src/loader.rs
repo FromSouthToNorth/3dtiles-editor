@@ -3,7 +3,10 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use tiles_core::{extract_glb_payloads, load_glb_or_gltf, DecodedMesh, TilesetJson};
+use tiles_core::{
+    decode_pnts, detect_container_kind, extract_glb_payloads, load_glb_or_gltf, DecodedMesh,
+    TileContainerKind, TilesetJson,
+};
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::Semaphore;
 
@@ -154,18 +157,29 @@ fn decode_tile_paths(paths: &[PathBuf]) -> Result<DecodedMesh> {
         let bytes = std::fs::read(path)
             .with_context(|| format!("Failed to read tile content {}", path.display()))?;
         let base_dir = path.parent();
-        let payloads = extract_glb_payloads(&bytes)?;
-        for payload in payloads {
-            let mut decoded = load_glb_or_gltf(payload.glb_bytes, base_dir, payload.rtc_center)?;
-            let tex_offset = merged.textures.len();
-            merged.textures.append(&mut decoded.textures);
-            for mut prim in decoded.primitives {
-                if let Some(idx) = prim.base_color_texture.as_mut() {
-                    *idx += tex_offset;
-                }
-                merged.primitives.push(prim);
+        match detect_container_kind(&bytes)? {
+            // 点云瓦片: pnts 内容并非 GLB 容器, 走独立解码路径
+            TileContainerKind::Pnts => {
+                let cloud = decode_pnts(&bytes)?;
+                merged.approx_cpu_bytes += cloud.approx_cpu_bytes;
+                merged.points.push(cloud);
             }
-            merged.approx_cpu_bytes += decoded.approx_cpu_bytes;
+            _ => {
+                let payloads = extract_glb_payloads(&bytes)?;
+                for payload in payloads {
+                    let mut decoded =
+                        load_glb_or_gltf(payload.glb_bytes, base_dir, payload.rtc_center)?;
+                    let tex_offset = merged.textures.len();
+                    merged.textures.append(&mut decoded.textures);
+                    for mut prim in decoded.primitives {
+                        if let Some(idx) = prim.base_color_texture.as_mut() {
+                            *idx += tex_offset;
+                        }
+                        merged.primitives.push(prim);
+                    }
+                    merged.approx_cpu_bytes += decoded.approx_cpu_bytes;
+                }
+            }
         }
     }
     Ok(merged)

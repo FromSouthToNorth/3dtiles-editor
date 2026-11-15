@@ -6,7 +6,7 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tiles_core::bounds::BOX_EDGE_INDICES;
-use tiles_core::{DecodedMesh, TilesetDoc, Vertex};
+use tiles_core::{DecodedMesh, PointInstance, TilesetDoc, Vertex};
 use wgpu::util::DeviceExt;
 
 #[repr(C)]
@@ -25,6 +25,18 @@ struct DrawUniform {
     flags: [f32; 4],
 }
 
+/// 点云每云 uniform: 与 points.wgsl 的 PointUniform 布局一致
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+struct PointUniform {
+    model_rel_cam: [[f32; 4]; 4],
+    viewport: [f32; 4], // (宽px, 高px, 点直径px, 保留)
+    tint: [f32; 4],     // (rgb 高亮色, a 混合强度)
+}
+
+/// 点云点直径（设备像素）, 屏幕恒定尺寸
+const POINT_SIZE_PX: f32 = 2.0;
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 struct LineVertex {
@@ -42,8 +54,18 @@ struct GpuPrimitive {
     bind_group: wgpu::BindGroup,
 }
 
+/// 点云瓦片的 GPU 侧资源: 逐点实例缓冲 + 每云 uniform
+struct GpuPointCloud {
+    instance_buffer: wgpu::Buffer,
+    point_count: u32,
+    local_to_tile: glam::DMat4,
+    uniform_buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+}
+
 struct GpuTileAsset {
     primitives: Vec<GpuPrimitive>,
+    point_clouds: Vec<GpuPointCloud>,
     _textures: Vec<wgpu::Texture>,
     gpu_bytes: usize,
     last_used_frame: u64,
@@ -71,6 +93,10 @@ pub struct TilesRenderer {
     draw_bind_group_layout: wgpu::BindGroupLayout,
     mesh_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
+    point_pipeline: wgpu::RenderPipeline,
+    point_draw_bind_group_layout: wgpu::BindGroupLayout,
+    /// billboard 四边形角点缓冲（静态, 6 顶点两三角形）
+    point_corner_buf: wgpu::Buffer,
 
     fallback_tex_view: wgpu::TextureView,
     default_sampler: wgpu::Sampler,
@@ -380,6 +406,108 @@ impl TilesRenderer {
             cache: None,
         });
 
+        let point_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("point-shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("points.wgsl").into()),
+        });
+        let point_draw_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("point-draw-layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    // 片元着色器亦读取 tint (选中高亮混合), 需两阶段可见
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+        let point_pipe_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("point-pipe-layout"),
+            bind_group_layouts: &[&frame_layout, &point_draw_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        // 槽 0 = 逐点实例缓冲 (步进 Instance), 槽 1 = 四边形角点缓冲 (步进 Vertex)
+        let point_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("point-pipeline"),
+            layout: Some(&point_pipe_layout),
+            vertex: wgpu::VertexState {
+                module: &point_shader,
+                entry_point: Some("vs_point"),
+                compilation_options: Default::default(),
+                buffers: &[
+                    wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<PointInstance>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &[
+                            wgpu::VertexAttribute {
+                                offset: 0,
+                                shader_location: 0,
+                                format: wgpu::VertexFormat::Float32x3,
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 12,
+                                shader_location: 1,
+                                format: wgpu::VertexFormat::Unorm8x4,
+                            },
+                        ],
+                    },
+                    wgpu::VertexBufferLayout {
+                        array_stride: 8,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &[wgpu::VertexAttribute {
+                            offset: 0,
+                            shader_location: 2,
+                            format: wgpu::VertexFormat::Float32x2,
+                        }],
+                    },
+                ],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &point_shader,
+                entry_point: Some("fs_point"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::GreaterEqual, // Reversed-Z
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        // billboard 角点: 两三角形覆盖 [-0.5,0.5]^2
+        let quad_corners: [[f32; 2]; 6] = [
+            [-0.5, -0.5],
+            [0.5, -0.5],
+            [0.5, 0.5],
+            [-0.5, -0.5],
+            [0.5, 0.5],
+            [-0.5, 0.5],
+        ];
+        let point_corner_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("point-corner-vbo"),
+            contents: bytemuck::cast_slice(&quad_corners),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
         let fallback_tex = upload_rgba_texture(&device, &queue, 1, 1, &[255, 255, 255, 255]);
         let fallback_tex_view = fallback_tex.create_view(&Default::default());
         let default_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -414,6 +542,9 @@ impl TilesRenderer {
             draw_bind_group_layout,
             mesh_pipeline,
             line_pipeline,
+            point_pipeline,
+            point_draw_bind_group_layout,
+            point_corner_buf,
             fallback_tex_view,
             default_sampler,
             gpu_tiles: HashMap::new(),
@@ -540,11 +671,56 @@ impl TilesRenderer {
             });
         }
 
+        // pnts 点云: 逐点实例缓冲 (位置 + RGBA8), 每云一个 uniform
+        let mut point_clouds = Vec::with_capacity(mesh.points.len());
+        for cloud in &mesh.points {
+            let instance_buffer = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("point-cloud-instances"),
+                    contents: bytemuck::cast_slice(&cloud.instances),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+            let ubuf = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("point-cloud-ubo"),
+                    contents: bytemuck::bytes_of(&PointUniform {
+                        model_rel_cam: glam::Mat4::IDENTITY.to_cols_array_2d(),
+                        viewport: [
+                            self.config.width as f32,
+                            self.config.height as f32,
+                            POINT_SIZE_PX,
+                            0.0,
+                        ],
+                        tint: [1.0, 1.0, 1.0, 0.0],
+                    }),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                });
+            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("point-cloud-bg"),
+                layout: &self.point_draw_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: ubuf.as_entire_binding(),
+                }],
+            });
+            gpu_bytes += cloud.instances.len() * std::mem::size_of::<PointInstance>();
+            point_clouds.push(GpuPointCloud {
+                instance_buffer,
+                point_count: cloud.instances.len() as u32,
+                local_to_tile: cloud.local_to_tile,
+                uniform_buffer: ubuf,
+                bind_group,
+            });
+        }
+
         self.total_gpu_bytes += gpu_bytes;
         self.gpu_tiles.insert(
             tile_id,
             GpuTileAsset {
                 primitives,
+                point_clouds,
                 _textures: tex_objs,
                 gpu_bytes,
                 last_used_frame: frame_no,
@@ -624,6 +800,32 @@ impl TilesRenderer {
                             model_rel_cam: model_f32.to_cols_array_2d(),
                             base_color_factor: prim.base_color_factor,
                             flags: [if is_sel { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+                        }),
+                    );
+                    draw_calls += 1;
+                }
+
+                // 点云 uniform: RTE 同样在 CPU 侧 f64 扣除视点
+                for cloud in &gpu_asset.point_clouds {
+                    let mut world_mat = node.world_transform * cloud.local_to_tile;
+                    world_mat.w_axis -= eye_world.extend(0.0);
+                    let tint: [f32; 4] = if is_sel {
+                        [0.98, 0.75, 0.14, 0.55] // 选中高亮: 金橙 55% 混合
+                    } else {
+                        [1.0, 1.0, 1.0, 0.0]
+                    };
+                    self.queue.write_buffer(
+                        &cloud.uniform_buffer,
+                        0,
+                        bytemuck::bytes_of(&PointUniform {
+                            model_rel_cam: world_mat.as_mat4().to_cols_array_2d(),
+                            viewport: [
+                                self.config.width as f32,
+                                self.config.height as f32,
+                                POINT_SIZE_PX,
+                                0.0,
+                            ],
+                            tint,
                         }),
                     );
                     draw_calls += 1;
@@ -728,6 +930,21 @@ impl TilesRenderer {
                         rpass.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
                         rpass.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                         rpass.draw_indexed(0..prim.index_count, 0, 0..1);
+                    }
+                }
+            }
+
+            // 点云绘制块: 实例化 billboard, 槽 0 = 逐点实例, 槽 1 = 静态角点
+            if doc.is_some() {
+                rpass.set_pipeline(&self.point_pipeline);
+                rpass.set_bind_group(0, &self.frame_bind_group, &[]);
+                rpass.set_vertex_buffer(1, self.point_corner_buf.slice(..));
+                for &tid in render_tile_ids {
+                    let Some(gpu_asset) = self.gpu_tiles.get(&tid) else { continue; };
+                    for cloud in &gpu_asset.point_clouds {
+                        rpass.set_bind_group(1, &cloud.bind_group, &[]);
+                        rpass.set_vertex_buffer(0, cloud.instance_buffer.slice(..));
+                        rpass.draw(0..6, 0..cloud.point_count);
                     }
                 }
             }

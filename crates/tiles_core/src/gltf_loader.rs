@@ -4,6 +4,8 @@ use glam::{DMat4, DVec3, Vec3};
 use image::ImageBuffer;
 use std::path::Path;
 
+use crate::pnts::DecodedPointCloud;
+
 /// 3D Tiles 规范: glTF Y-up -> 3D Tiles Z-up（绕 +X 轴旋转 +90°）
 pub const Y_UP_TO_Z_UP: DMat4 = DMat4::from_cols_array(&[
     1.0, 0.0, 0.0, 0.0,
@@ -42,6 +44,8 @@ pub struct DecodedPrimitive {
 #[derive(Debug, Clone)]
 pub struct DecodedMesh {
     pub primitives: Vec<DecodedPrimitive>,
+    /// pnts 点云内容（与 primitives 互不重叠的两种瓦片内容形态）
+    pub points: Vec<DecodedPointCloud>,
     pub textures: Vec<DecodedTexture>,
     pub approx_cpu_bytes: usize,
 }
@@ -50,13 +54,14 @@ impl DecodedMesh {
     pub fn empty() -> Self {
         Self {
             primitives: Vec::new(),
+            points: Vec::new(),
             textures: Vec::new(),
             approx_cpu_bytes: 0,
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.primitives.is_empty()
+        self.primitives.is_empty() && self.points.is_empty()
     }
 }
 
@@ -123,6 +128,7 @@ pub fn load_glb_or_gltf(
 
     Ok(DecodedMesh {
         primitives,
+        points: Vec::new(),
         textures,
         approx_cpu_bytes: approx_bytes,
     })
